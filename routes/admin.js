@@ -67,6 +67,16 @@ router.get('/', requireAdmin, async (req, res) => {
           <div class="admin-section-arrow">›</div>
         </div>
       </a>
+      <a href="/history" class="admin-section-link">
+        <div class="admin-section-card">
+          <div class="admin-section-icon">💰</div>
+          <div>
+            <div class="admin-section-title">Payments & History</div>
+            <div class="admin-section-sub">Track paid vs unpaid checkouts</div>
+          </div>
+          <div class="admin-section-arrow">›</div>
+        </div>
+      </a>
       <a href="/admin/room-types" class="admin-section-link">
         <div class="admin-section-card">
           <div class="admin-section-icon">🏷</div>

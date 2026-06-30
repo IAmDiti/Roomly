@@ -127,11 +127,11 @@ router.get('/', requireAdmin, async (req, res) => {
         'picker.innerHTML = \'<option value="">Any room of this type (assign later)</option>\';' +
         'if (typeId && roomsByType[typeId]) {' +
           'roomsByType[typeId].forEach(function(room) {' +
-            'const label = room.status === "available" ? "" : " (" + room.status + ")";' +
+            'const label = (room.status === "available" || room.status === "ready") ? "" : " (" + room.status + ")";' +
             'const opt = document.createElement("option");' +
             'opt.value = room.id;' +
             'opt.textContent = "Room " + room.number + label;' +
-            'if (room.status !== "available") opt.disabled = true;' +
+            'if (room.status !== "available" && room.status !== "ready") opt.disabled = true;' +
             'picker.appendChild(opt);' +
           '});' +
         '}' +
@@ -252,7 +252,7 @@ router.post('/:id/checkin-name', requireAdmin, async (req, res) => {
         .select('*')
         .eq('hotel_id', hotelId)
         .eq('room_type_id', reservation.room_type_id)
-        .eq('status', 'available')
+        .in('status', ['available', 'ready'])
         .limit(1)
         .single();
       roomId = availableRoom?.id || null;

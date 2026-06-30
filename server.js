@@ -20,6 +20,7 @@ app.use('/auth', require('./routes/auth'));
 app.use('/reservations', require('./routes/reservations'));
 app.use('/rooms', require('./routes/rooms'));
 app.use('/availability', require('./routes/availability'));
+app.use('/history', require('./routes/history'));
 app.use('/cleaner', require('./routes/cleaner'));
 app.use('/admin', require('./routes/admin'));
 
