@@ -4,6 +4,27 @@ const supabase = require('../supabase');
 const { requireAdmin } = require('../middleware/auth');
 const { layout } = require('../lib/layout');
 
+// Returns conflicting reservation if room is already booked for these dates, else null
+async function findRoomConflict(hotelId, roomId, checkIn, checkOut, excludeReservationId = null) {
+  if (!roomId) return null;
+
+  let query = supabase
+    .from('reservations')
+    .select('id, guest_name, check_in, check_out')
+    .eq('hotel_id', hotelId)
+    .eq('room_id', roomId)
+    .in('status', ['pending', 'checked_in'])
+    .lt('check_in', checkOut)
+    .gt('check_out', checkIn);
+
+  if (excludeReservationId) {
+    query = query.neq('id', excludeReservationId);
+  }
+
+  const { data: conflicts } = await query;
+  return (conflicts && conflicts.length > 0) ? conflicts[0] : null;
+}
+
 router.get('/', requireAdmin, async (req, res) => {
   const hotelId = req.hotelId;
   const filterDate = req.query.date || '';
@@ -77,8 +98,11 @@ router.get('/', requireAdmin, async (req, res) => {
     roomsByType[r.room_type_id].push({ id: r.id, number: r.number, status: r.status });
   });
 
+  const errorMsg = req.query.error || '';
+
   const pageBody = '<div class="page-title">Reservations</div>' +
     '<div class="page-sub">' + hotelName + '</div>' +
+    (errorMsg ? '<div class="alert alert-error">⚠️ ' + errorMsg + '</div>' : '') +
     '<form method="GET" action="/reservations" class="date-filter">' +
       '<input type="date" name="date" value="' + filterDate + '" placeholder="Filter by date"/>' +
       '<button type="submit">Filter</button>' +
@@ -179,6 +203,18 @@ router.post('/add', requireAdmin, async (req, res) => {
   const roomIds = Array.isArray(multi_room_ids) ? multi_room_ids : (multi_room_ids ? [multi_room_ids] : []);
 
   if (roomTypes.length > 1) {
+    // Check every specified room for conflicts before inserting any
+    for (let i = 0; i < roomTypes.length; i++) {
+      if (roomIds[i]) {
+        const conflict = await findRoomConflict(hotelId, roomIds[i], check_in, check_out);
+        if (conflict) {
+          return res.redirect('/reservations?error=' + encodeURIComponent(
+            'Room is already booked by ' + conflict.guest_name + ' from ' + conflict.check_in + ' to ' + conflict.check_out
+          ));
+        }
+      }
+    }
+
     const groupId = require('crypto').randomUUID();
     const inserts = roomTypes.map((typeId, i) => ({
       hotel_id: hotelId,
@@ -196,6 +232,16 @@ router.post('/add', requireAdmin, async (req, res) => {
     }));
     await supabase.from('reservations').insert(inserts);
   } else {
+    const finalRoomId = room_id || (roomIds[0] || null);
+    if (finalRoomId) {
+      const conflict = await findRoomConflict(hotelId, finalRoomId, check_in, check_out);
+      if (conflict) {
+        return res.redirect('/reservations?error=' + encodeURIComponent(
+          'Room is already booked by ' + conflict.guest_name + ' from ' + conflict.check_in + ' to ' + conflict.check_out
+        ));
+      }
+    }
+
     await supabase.from('reservations').insert({
       hotel_id: hotelId,
       guest_name: guest_name.trim(),
@@ -203,7 +249,7 @@ router.post('/add', requireAdmin, async (req, res) => {
       check_in,
       check_out,
       room_type_id: room_type_id || (roomTypes[0] || null),
-      room_id: room_id || null,
+      room_id: finalRoomId,
       notes: notes?.trim() || null,
       status: 'pending',
       source: 'call'
@@ -216,6 +262,15 @@ router.post('/add', requireAdmin, async (req, res) => {
 router.post('/add-direct', requireAdmin, async (req, res) => {
   const hotelId = req.hotelId;
   const { room_id, room_type_id, guest_name, guest_phone, check_in, check_out, notes } = req.body;
+
+  if (room_id) {
+    const conflict = await findRoomConflict(hotelId, room_id, check_in, check_out);
+    if (conflict) {
+      return res.redirect('/rooms?error=' + encodeURIComponent(
+        'Room is already booked by ' + conflict.guest_name + ' from ' + conflict.check_in + ' to ' + conflict.check_out
+      ));
+    }
+  }
 
   await supabase.from('reservations').insert({
     hotel_id: hotelId,
@@ -246,16 +301,34 @@ router.post('/:id/checkin-name', requireAdmin, async (req, res) => {
   if (reservation) {
     let roomId = reservation.room_id;
 
-    if (!roomId) {
-      const { data: availableRoom } = await supabase
+    if (roomId) {
+      // Room was pre-assigned — verify no conflict before confirming check-in
+      const conflict = await findRoomConflict(hotelId, roomId, reservation.check_in, reservation.check_out, reservation.id);
+      if (conflict) {
+        return res.redirect('/reservations?error=' + encodeURIComponent(
+          'Assigned room conflicts with ' + conflict.guest_name + ' (' + conflict.check_in + ' to ' + conflict.check_out + '). Please reassign.'
+        ));
+      }
+    } else {
+      // No room pre-assigned — find one of the right type with no conflicts in this date range
+      const { data: candidateRooms } = await supabase
         .from('rooms')
         .select('*')
         .eq('hotel_id', hotelId)
         .eq('room_type_id', reservation.room_type_id)
-        .in('status', ['available', 'ready'])
-        .limit(1)
-        .single();
-      roomId = availableRoom?.id || null;
+        .in('status', ['available', 'ready']);
+
+      for (const candidate of (candidateRooms || [])) {
+        const conflict = await findRoomConflict(hotelId, candidate.id, reservation.check_in, reservation.check_out, reservation.id);
+        if (!conflict) {
+          roomId = candidate.id;
+          break;
+        }
+      }
+
+      if (!roomId) {
+        return res.redirect('/reservations?error=' + encodeURIComponent('No rooms of this type are free for these dates'));
+      }
     }
 
     await supabase.from('reservations').update({
@@ -264,9 +337,7 @@ router.post('/:id/checkin-name', requireAdmin, async (req, res) => {
       room_id: roomId
     }).eq('id', req.params.id);
 
-    if (roomId) {
-      await supabase.from('rooms').update({ status: 'occupied' }).eq('id', roomId);
-    }
+    await supabase.from('rooms').update({ status: 'occupied' }).eq('id', roomId);
   }
 
   res.redirect('/reservations');
@@ -291,22 +362,12 @@ router.post('/:id/extend', requireAdmin, async (req, res) => {
     return res.json({ success: false, error: 'New date must be on or after current check-out' });
   }
 
-  // Check if any OTHER reservation on this room overlaps the extended period
-  const { data: conflicts } = await supabase
-    .from('reservations')
-    .select('id, guest_name, check_in, check_out')
-    .eq('hotel_id', hotelId)
-    .eq('room_id', room_id)
-    .neq('id', req.params.id)
-    .in('status', ['pending', 'checked_in'])
-    .lt('check_in', new_check_out)
-    .gt('check_out', reservation.check_out);
+  const conflict = await findRoomConflict(hotelId, room_id, reservation.check_out, new_check_out, req.params.id);
 
-  if (conflicts && conflicts.length > 0) {
-    const c = conflicts[0];
+  if (conflict) {
     return res.json({
       success: false,
-      error: 'Room is booked by ' + c.guest_name + ' starting ' + c.check_in + '. Cannot extend past that.'
+      error: 'Room is booked by ' + conflict.guest_name + ' starting ' + conflict.check_in + '. Cannot extend past that.'
     });
   }
 

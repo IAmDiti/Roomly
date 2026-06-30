@@ -80,6 +80,7 @@ router.get('/', requireAdmin, async (req, res) => {
     body: `
     <div class="page-title">Room Board</div>
     <div class="page-sub">Occupied rooms shown first · Tap available to book</div>
+    ${req.query.error ? `<div class="alert alert-error">⚠️ ${req.query.error}</div>` : ''}
 
     <form method="GET" action="/rooms" class="date-filter">
       <input type="date" name="date" value="${filterDate}"/>
