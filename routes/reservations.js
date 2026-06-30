@@ -272,6 +272,51 @@ router.post('/:id/checkin-name', requireAdmin, async (req, res) => {
   res.redirect('/reservations');
 });
 
+router.post('/:id/extend', requireAdmin, async (req, res) => {
+  const hotelId = req.hotelId;
+  const { new_check_out, room_id } = req.body;
+
+  if (!new_check_out || !room_id) {
+    return res.json({ success: false, error: 'Missing date or room' });
+  }
+
+  const { data: reservation } = await supabase
+    .from('reservations').select('*').eq('id', req.params.id).single();
+
+  if (!reservation) {
+    return res.json({ success: false, error: 'Reservation not found' });
+  }
+
+  if (new_check_out < reservation.check_out) {
+    return res.json({ success: false, error: 'New date must be on or after current check-out' });
+  }
+
+  // Check if any OTHER reservation on this room overlaps the extended period
+  const { data: conflicts } = await supabase
+    .from('reservations')
+    .select('id, guest_name, check_in, check_out')
+    .eq('hotel_id', hotelId)
+    .eq('room_id', room_id)
+    .neq('id', req.params.id)
+    .in('status', ['pending', 'checked_in'])
+    .lt('check_in', new_check_out)
+    .gt('check_out', reservation.check_out);
+
+  if (conflicts && conflicts.length > 0) {
+    const c = conflicts[0];
+    return res.json({
+      success: false,
+      error: 'Room is booked by ' + c.guest_name + ' starting ' + c.check_in + '. Cannot extend past that.'
+    });
+  }
+
+  await supabase.from('reservations')
+    .update({ check_out: new_check_out })
+    .eq('id', req.params.id);
+
+  res.json({ success: true });
+});
+
 router.post('/:id/checkout', requireAdmin, async (req, res) => {
   const { data: reservation } = await supabase.from('reservations').select('*').eq('id', req.params.id).single();
 

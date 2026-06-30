@@ -56,7 +56,7 @@ router.get('/', requireAdmin, async (req, res) => {
           ${statusLabel[effectiveStatus] || effectiveStatus}
         </div>
         ${res ? `<div style="font-size:10px;color:#888;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px;">${res.guest_name}</div>` : ''}
-        ${res ? `<div style="font-size:9px;color:#aaa;margin-top:1px;">${res.check_out}</div>` : ''}
+        ${res ? `<div onclick="event.stopPropagation();openExtend('${res.id}','${r.number}','${res.check_out}','${r.id}')" style="font-size:9px;color:#534AB7;margin-top:1px;font-weight:600;cursor:pointer;text-decoration:underline;">${res.check_out} ✎</div>` : ''}
         ${isAvailable ? `<div style="font-size:10px;color:#534AB7;margin-top:4px;font-weight:600;">+ Book</div>` : ''}
       </div>
       ${isOccupied && res ? `
@@ -111,6 +111,25 @@ router.get('/', requireAdmin, async (req, res) => {
     <form method="POST" id="checkout-form" action="" style="display:none;">
     </form>
 
+    <!-- EXTEND STAY MODAL -->
+    <div id="extend-overlay" onclick="closeExtend()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:400;"></div>
+    <div id="extend-modal" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#fff;border-radius:20px 20px 0 0;padding:24px;z-index:500;max-width:480px;margin:0 auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <div>
+          <div style="font-size:18px;font-weight:800;">Change Check-out Date</div>
+          <div style="font-size:13px;color:#888;margin-top:2px;" id="extend-sub"></div>
+        </div>
+        <button onclick="closeExtend()" style="background:none;border:none;font-size:24px;cursor:pointer;color:#aaa;">×</button>
+      </div>
+      <div id="extend-error" style="display:none;background:#fee2e2;color:#dc2626;padding:10px 14px;border-radius:10px;font-size:13px;margin-bottom:14px;font-weight:600;"></div>
+      <div class="form-group">
+        <label class="form-label">New Check-out Date</label>
+        <input class="form-input" type="date" id="extend-new-date"/>
+      </div>
+      <button class="btn btn-primary" type="button" onclick="submitExtend()">Save New Date</button>
+      <form method="POST" id="extend-form" action="" style="display:none;"></form>
+    </div>
+
     <!-- QUICK BOOKING MODAL -->
     <div id="booking-overlay" onclick="closeBooking()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:400;"></div>
     <div id="booking-modal" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#fff;border-radius:20px 20px 0 0;padding:24px;z-index:500;max-width:480px;margin:0 auto;max-height:90vh;overflow-y:auto;">
@@ -153,6 +172,47 @@ router.get('/', requireAdmin, async (req, res) => {
 
     <script>
       let basePrice = 0;
+
+      let currentExtendResId = '';
+      let currentExtendRoomId = '';
+
+      function openExtend(resId, roomNum, currentCheckout, roomId) {
+        currentExtendResId = resId;
+        currentExtendRoomId = roomId;
+        document.getElementById('extend-sub').textContent = 'Room ' + roomNum + ' · Currently checks out ' + currentCheckout;
+        document.getElementById('extend-new-date').value = currentCheckout;
+        document.getElementById('extend-new-date').min = currentCheckout;
+        document.getElementById('extend-error').style.display = 'none';
+        document.getElementById('extend-overlay').style.display = 'block';
+        document.getElementById('extend-modal').style.display = 'block';
+      }
+
+      function closeExtend() {
+        document.getElementById('extend-overlay').style.display = 'none';
+        document.getElementById('extend-modal').style.display = 'none';
+      }
+
+      async function submitExtend() {
+        const newDate = document.getElementById('extend-new-date').value;
+        const errorBox = document.getElementById('extend-error');
+        errorBox.style.display = 'none';
+
+        if (!newDate) return;
+
+        const resp = await fetch('/reservations/' + currentExtendResId + '/extend', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_check_out: newDate, room_id: currentExtendRoomId })
+        });
+        const result = await resp.json();
+
+        if (result.success) {
+          location.reload();
+        } else {
+          errorBox.textContent = result.error || 'Could not update date';
+          errorBox.style.display = 'block';
+        }
+      }
 
       function confirmCheckout(resId, guestName, roomNum) {
         if (confirm('Check out ' + guestName + ' from Room ' + roomNum + '?')) {
